@@ -44,7 +44,7 @@ img=mpimg.imread(currentImageFile)
 ##############################################################################
 ### 4. Pre-processing
 ###### 4.1 - Parse image files   #############################################
-
+########## 4.1.1 - Create metadata table
 prefix     = []
 wellNumber = []
 posNumber  = []
@@ -59,9 +59,59 @@ for fileName in imageFiles:
     posNumber  += [splitName[2]]
     dateValue  += [splitName[3]]
     timeValue  += [splitName[4]]
-
-
+    
 imageMetadata = pd.DataFrame(list(zip(imageFiles, prefix, wellNumber, posNumber, dateValue, timeValue)), columns = ['imageFiles', 'prefix', 'wellNumber', 'posNumber', 'dateValue', 'timeValue'])
+
+########## 4.1.2 - Subset metadata by project, date, and time
+projectDict = {}                                      # Create a list of unique prefixes
+wellDict = {}
+
+for project in projectNames:                                                    # Loop through prefixes
+
+    rowstoInclude = list(np.where(np.array(prefix) == project)[0])           # For each, identify their rows
+    newDF = imageMetadata.iloc[rowstoInclude]
+    dateNames = list(np.unique(newDF['dateValue']))
+    dateDict = {}
+    
+    for dateValue in dateNames:
+        rowstoInclude2 = list(np.where(np.array(newDF['dateValue']) == dateValue)[0])
+        newDF2 = newDF.iloc[rowstoInclude2,:]
+        timeNames = list(np.unique(newDF2['timeValue']))
+        timeDict = {}
+        
+        for timeValue in timeNames:
+            rowstoInclude2 = list(np.where(np.array(newDF2['timeValue']) == timeValue)[0])
+            newDF3 = newDF2.iloc[rowstoInclude2,:]
+            timeDict[timeValue] = newDF3
+            wellNames = list(np.unique(newDF3['wellNumber']))
+
+            for well in wellNames:
+                rowstoInclude2 = list(np.where(np.array(newDF3['wellNumber']) == well)[0])
+                wellList = list(newDF3.iloc[rowstoInclude2, 0])
+                wellDict[project + '_' + dateValue + '_' + timeValue + '_' + well] = wellList
+        
+        dateDict[dateValue] = timeDict
+        
+    projectDict[project] = dateDict                                               # Add it to the DF list
+
+### 
+
+for well in list(wellDict):
+    print('\n' + well + ':\n')
+    for fileName in wellDict[well]:
+        print(fileName)
+    print('\n')
+
+
+for currentImageFile in fileList:
+    # Identify its well position
+    
+
+list(projectDict)     ## Returns a list of project names
+list(projectDict.values())  ## Returns a list of dataframes
+list(projectDict.values())[0].loc('dateValue')
+
+
                              
 wellList = np.unique(wellNumber)
 
@@ -74,6 +124,9 @@ for well in wellList:
     imagesToInclude = imageMetadata.iloc[posToInclude,:].iloc[:,0].tolist()
     for fileName in imagesToInclude:
         print(fileName)
+
+
+img=mpimg.imread(currentImageFile)
 
 ###### 4.2 - Rescale  #############################################
 
