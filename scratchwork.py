@@ -217,3 +217,25 @@ for contour in find_contours(img, 0):
 ax2.axis((0, 800, 0, 800))
 
 plt.show()
+
+
+###############################################################################
+### PLotting lines
+
+point1 = [1, 2]
+point2 = [3, 4]
+
+x_values = [point1[0], point2[0]]
+y_values = [point1[1], point2[1]]
+
+x_values = closest_pairs[:,0]
+
+
+plt.plot(x_values, y_values)
+
+for row in closest_pairs:
+    x_values = [row[0], row[2]]
+    y_values = [row[1], row[3]]
+    plt.plot(x_values, y_values)
+    
+
