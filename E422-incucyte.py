@@ -16,16 +16,23 @@ from skimage.segmentation import clear_border
 from skimage.measure import label, regionprops, regionprops_table
 from skimage.morphology import closing, square
 from skimage.color import label2rgb
+from skimage.transform import rescale, resize, downscale_local_mean
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 import numpy as np
 import pandas as pd
+from datetime import datetime
+
+#from skimage import data, color
 
 pd.set_option('display.max_rows', 500)
 pd.set_option('display.max_columns', 20)
 pd.set_option('display.width', 1000)
 np.set_printoptions(edgeitems=3, infstr='inf',linewidth=200, nanstr='nan', precision=8,suppress=False, threshold=1000, formatter=None)
 #import scipy
+
+### Import matix placements
+matrixPlacements = pd.read_csv('C:\\Users\\grossar\\Box\\Sareen Lab Shared\\Data\\Andrew\\E422 - Incucyte data harvesting\\matrixPlacements.csv')
 ##############################################################################
 ### 2. Define functions
 
@@ -33,16 +40,29 @@ np.set_printoptions(edgeitems=3, infstr='inf',linewidth=200, nanstr='nan', preci
 
 ##############################################################################
 ### 3. Import Images
+###### 3.1 - Test load images    #############################################
 
-os.chdir('C:\\Users\\grossar\\Box\\Incucyte\\Andrew')
-os.chdir('C:\\Users\\grossar\\Box\\Incucyte\\Andrew\\2021y07m11d\\05h02m')
 os.chdir('E:\\Andrew\\Incucyte')
+os.chdir('C:\\Users\\grossar\\Box\\MTEC grant\\Incucyte\\Andrew')
 
 imageFiles = os.listdir()
+imageFiles2 = []
+for item in imageFiles:
+    if '.jpg' in item:
+        print(item)
+        imageFiles2.append(item)
+    else:
+        pass
+
+imageFiles = imageFiles2
 currentImageFile = imageFiles[4]
 img=mpimg.imread(currentImageFile)
 io.imshow(img)
-"""
+
+###### 3.2 - Generate an empty df   ##########################################
+
+fullDf = pd.DataFrame(columns = ['Experiment', 'DateTime', 'Date', 'Time', 'Well', 'Surface Area-total', 'Colony Num', 'Confluence', 'Dist-min', 'Dist-SD-down', 'Dist-med', 'Dist-SD-up', 'Dist-max'])
+
 ##############################################################################
 ### 4. Pre-processing
 ###### 4.1 - Parse image files   #############################################
@@ -52,19 +72,51 @@ wellNumber = []
 posNumber  = []
 dateValue  = []
 timeValue  = []
+dateTime   = []
 
 for fileName in imageFiles:
     splitName = fileName.split('.')[0]
     splitName = splitName.split('_')
     prefix     += [splitName[0]]
     wellNumber += [splitName[1]]
-    posNumber  += [splitName[2]]
+    posNumber  += [int(splitName[2])]
     dateValue  += [splitName[3]]
     timeValue  += [splitName[4]]
+    dateTime   += [datetime.strptime(splitName[3]+splitName[4], '%Yy%mm%dd%Hh%Mm')]
     
-imageMetadata = pd.DataFrame(list(zip(imageFiles, prefix, wellNumber, posNumber, dateValue, timeValue)), columns = ['imageFiles', 'prefix', 'wellNumber', 'posNumber', 'dateValue', 'timeValue'])
+imageMetadata = pd.DataFrame(list(zip(imageFiles, prefix, wellNumber, posNumber, dateValue, timeValue, dateTime)), columns = ['imageFiles', 'prefix', 'wellNumber', 'posNumber', 'dateValue', 'timeValue', 'dateTime'])
 
 ########## 4.1.2 - Subset metadata by project, date, and time
+### Report prefix groups present:
+prefixArray = imageMetadata['prefix'].unique()
+print('Unique prefixes found: ' + str(len(prefixArray)))
+for prefix in prefixArray:    print(prefix)
+    
+currentPrefix = prefixArray[0]
+imageMetadataCurrent = imageMetadata[imageMetadata['prefix'] == currentPrefix]
+
+### Report datetimes present:
+dateTimeArray = imageMetadataCurrent['dateTime'].unique()
+print('Unique date-times found: ' + str(len(dateTimeArray)))
+for dateTime in dateTimeArray:    print(dateTime)
+
+currentDateTime = dateTimeArray[0]
+imageMetadataCurrent = imageMetadataCurrent[imageMetadataCurrent['dateTime'] == currentDateTime]
+
+currentDate = currentDateTime
+currentTime = currentDateTime
+
+wellNumberArray = imageMetadataCurrent['wellNumber'].unique()
+print('Unique wells found: ' + str(len(wellNumberArray)))
+for well in wellNumberArray:    print(well)
+
+currentWell = wellNumberArray[1]
+imageMetadataCurrent = imageMetadataCurrent[imageMetadataCurrent['wellNumber'] == currentWell]
+
+imageMetadataCurrent = imageMetadataCurrent.sort_values('posNumber')
+
+"""
+
 projectDict = {}                                      # Create a list of unique prefixes
 wellDict = {}
 
@@ -95,9 +147,7 @@ for project in projectNames:                                                    
         dateDict[dateValue] = timeDict
         
     projectDict[project] = dateDict                                               # Add it to the DF list
-
 ### 
-
 for well in list(wellDict):
     print('\n' + well + ':\n')
     for fileName in wellDict[well]:
@@ -112,11 +162,53 @@ list(projectDict.values())  ## Returns a list of dataframes
 list(projectDict.values())[0].loc('dateValue')
                            
 wellList = np.unique(wellNumber)
-
+"""
 ###### 4.2 - Stitch well images  #############################################
-    indexes = np.where(np.array(ints) == item)[0]
-    
-for well in wellList:
+### Loac an image
+#os.chdir('E:\\Andrew\\Incucyte')
+currentImageFile = imageMetadataCurrent['imageFiles'].iloc[0]
+imgNew=mpimg.imread(currentImageFile)
+np.shape(imgNew)
+### Rescaele it
+imgNew = (rescale(imgNew, 0.25, anti_aliasing = False)*255).astype(np.uint8)
+np.shape(imgNew)
+yw = imgNew.shape[0]
+xw = imgNew.shape[1]
+
+### Make an empty matrix 9x7 the size of one image
+imgStitched = np.zeros((yw*9, xw*7)).astype(np.uint8)
+
+io.imshow(imgNew)
+
+yn = 0
+xn = 2
+
+io.imshow(imgStitched)
+imgStitched[yn*yw:(yn+1)*yw, xn*xw:(xn+1)*xw] = imgNew
+io.imshow(imgStitched)
+
+
+imgStitched = np.zeros((yw*9, xw*7)).astype(np.uint8)
+
+io.imshow(imgStitched)
+
+for posNum in range(0,len(imageMetadataCurrent)):
+    file = imageMetadataCurrent['imageFiles'].iloc[posNum]
+    print(file)
+    imgNew=mpimg.imread(file)
+    imgNew = (rescale(imgNew, 0.25, anti_aliasing = False)*255).astype(np.uint8)
+    yw = imgNew.shape[0]
+    xw = imgNew.shape[1]
+    yn = matrixPlacements['y'][posNum]
+    xn = matrixPlacements['x'][posNum]
+    imgStitched[yn*yw:(yn+1)*yw, xn*xw:(xn+1)*xw] = imgNew
+
+io.imshow(imgStitched)
+
+
+    #indexes = np.where(np.array(ints) == item)[0]
+"""
+for well in wellNumberArray:
     print(well)
     posToInclude = np.where(np.array(wellNumber) == well)[0].tolist()
     imagesToInclude = imageMetadata.iloc[posToInclude,:].iloc[:,0].tolist()
@@ -124,17 +216,19 @@ for well in wellList:
         print(fileName)
 
 img=mpimg.imread(currentImageFile)
-"""
-###### 4.2 - Rescale  #############################################
-
 
 ##############################################################################
-### 4. Processing
+### 5. Processing
 ###### 5.1 - Isolate mask  ###################################################
-
+os.chdir('E:\\Andrew\\Incucyte')
+imageFiles = os.listdir()
+currentImageFile = imageFiles[4]
+img=mpimg.imread(currentImageFile)
+io.imshow(img)
 np.shape(img)
 #img = rgb2hsv(img)[:, :, 1]   # Extract the saturation layer
-
+"""
+img = imgStitched
 img = closing(img > 0.5, square(9))
 
 # remove artifacts connected to image border
@@ -156,9 +250,14 @@ img_data_l = regionprops(label_image = label_img, intensity_image = img)
 img_data_df = regionprops_table(label_image = label_img, intensity_image = img, 
                              properties = ('label', 'centroid', 'convex_image', 'area', 'eccentricity', 'equivalent_diameter', 'euler_number'))
 
-# List the number of regions
-len(img_data_l)
 
+saTotal = 10
+conf = 50
+
+
+# List the number of regions
+colonyN = len(img_data_l)
+print(colonyN)
 img_data = pd.DataFrame(img_data_df)
 
 img_data.head()
@@ -212,9 +311,9 @@ plt.show()
 ###### 5.4 - Calculate the distance between all points  ######################
 #coords_all = coords_all[100:200,0:3]   # For testing purposes
 
-coords_all_x = coords_all[:,0]
-coords_all_y = coords_all[:,1]
-coords_all_c = coords_all[:,2]
+coords_all_x = coords_all[:,0].astype(np.int16)
+coords_all_y = coords_all[:,1].astype(np.int16)
+coords_all_c = coords_all[:,2].astype(np.int16)
 
 ### For testing & dev, make them small
 #coords_all_x = coords_all_x[200:220]
@@ -234,7 +333,7 @@ coords_y_minus_y = np.square(coords_y_minus_y)
 coords_dist = coords_x_minus_x + coords_y_minus_y
 coords_dist = np.sqrt(coords_dist)
 
-###### 5.5 - Create a matrix of points frome shared colonies  ################
+###### 5.5 - Create a matrix of points from shared colonies  ################
 colony_matrix = np.ones((len(coords_all_c), len(coords_all_c))) * coords_all_c
 colony_matrix = colony_matrix - np.transpose(colony_matrix)
 colony_matrix = (colony_matrix == 0)*1
@@ -267,10 +366,34 @@ plt.show()
 #min_dist = min_dist / 0.295
 min_dist = min_dist * 2.82
 
-print('For file ' + str(currentImageFile) + ' : ')
-print('The median distance between colonies is ' + str(round(np.median(min_dist),1)) + ' um')
-print('The minimum distance between colonies is ' + str(round(np.min(min_dist),1)) + ' um')
-print('The maximum distance between colonies is ' + str(round(np.max(min_dist),1)) + ' um')
-print('Two-thirds of colonies are between ' + str(round(np.median(min_dist)-np.std(min_dist))) + ' um and ' + 
-     str(round(np.median(min_dist)+np.std(min_dist))) + ' um from neighboring colonies.')
+dMedian = round(np.median(min_dist),1)
+dMin    = round(np.min(min_dist),1)
+dSD1    = round(np.median(min_dist)-np.std(min_dist)) 
+dSD2    = round(np.median(min_dist)+np.std(min_dist))
+dMax    = round(np.max(min_dist),1)
 
+print('For file ' + str(currentImageFile) + ' : ')
+print('The median distance between colonies is ' + str(dMedian) + ' um')
+print('The minimum distance between colonies is ' + str(dmin) + ' um')
+print('The maximum distance between colonies is ' + str(dMax) + ' um')
+print('Two-thirds of colonies are between ' + str(dSD1) + ' um and ' + str(dSD2) + ' um from neighboring colonies.')
+
+###### 5.8 - Add new stats to a row        ###################################
+
+fullDf = fullDf.append({'Experiment':currentPrefix, 'DateTime': currentDateTime, 'Date':currentDate, 'Time':currentTime, 'Well':currentWell, 'Surface Area-total':saTotal, 'Colony Num':colonyN, 'Confluence':conf, 'Dist-min':dMin, 'Dist-SD-down':dSD1, 'Dist-med':dMedian, 'Dist-SD-up':dSD2, 'Dist-max':dMax}, ignore_index = True)
+#dfObj = dfObj.append({'User_ID': 23, 'UserName': 'Riti', 'Action': 'Login'}, ignore_index=True)
+
+
+##############################################################################
+### 6. Export
+###### 6.1 - Save image    ###################################################
+os.chdir('E:\\Andrew\\Incucyte')
+os.chdir('C:\\Users\\grossar\\Box\\MTEC grant\\Incucyte\\Andrew')
+###### 6.2 - Save export dataframe  ##########################################
+#matrixPlacements = pd.read_csv('C:\\Users\\grossar\\Box\\Sareen Lab Shared\\Data\\Andrew\\E422 - Incucyte data harvesting\\matrixPlacements.csv')
+os.chdir('C:\\Users\\grossar\\Box\\Sareen Lab Shared\\Data\\Andrew\\E422 - Incucyte data harvesting\\')
+
+fullDf.to_excel('incucyte-data-extraction-test.xls', index=False)
+
+im = Image.fromarray(array)
+im.save("filename.jpeg")
