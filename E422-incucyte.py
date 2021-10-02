@@ -10,20 +10,28 @@ This program is intended to read in images, identify colonies, and extract key f
 ### 1. Import Libraries
 
 import os
-from skimage import data, io, filters
-from skimage.color import rgb2hsv
+from sys import getsizeof
 from skimage.segmentation import clear_border
 from skimage.measure import label, regionprops, regionprops_table
 from skimage.morphology import closing, square
 from skimage.color import label2rgb
-from skimage.transform import rescale, resize, downscale_local_mean
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 import numpy as np
 import pandas as pd
 from datetime import datetime
+from skimage import data, io, filters
+from skimage.transform import rescale, resize, downscale_local_mean
+from skimage.measure import find_contours, approximate_polygon, subdivide_polygon
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+import gc
 
+
+"""
+from skimage.color import rgb2hsv
 #from skimage import data, color
+"""
 
 pd.set_option('display.max_rows', 500)
 pd.set_option('display.max_columns', 20)
@@ -36,198 +44,166 @@ matrixPlacements = pd.read_csv('C:\\Users\\grossar\\Box\\Sareen Lab Shared\\Data
 ##############################################################################
 ### 2. Define functions
 
+###### 2.1 - getImageFiles
+def getImageFiles(imgFormat = '.jpg'):
+    print(os.getcwd())
+    allFiles = os.listdir()
+    imageFiles = []
+    for file in allFiles:
+        if imgFormat in file:
+            print(file)
+            imageFiles.append(file)
+        else:
+            pass
+    return(imageFiles)
 
+###### 2.2 - createMetadataTable 
+def createMetadataTable (imageFiles):
+    prefix     = []
+    wellNumber = []
+    posNumber  = []
+    dateValue  = []
+    timeValue  = []
+    dateTime   = []
+    for fileName in imageFiles:
+        splitName = fileName.split('.')[0]
+        splitName = splitName.split('_')
+        prefix     += [splitName[0]]
+        wellNumber += [splitName[1]]
+        posNumber  += [int(splitName[2])]
+        dateValue  += [splitName[3]]
+        timeValue  += [splitName[4]]
+        dateTime   += [datetime.strptime(splitName[3]+splitName[4], '%Yy%mm%dd%Hh%Mm')]
+    imageMetadata = pd.DataFrame(list(zip(imageFiles, prefix, wellNumber, posNumber, dateValue, timeValue, dateTime)), columns = ['imageFiles', 'prefix', 'wellNumber', 'posNumber', 'dateValue', 'timeValue', 'dateTime'])
+    return(imageMetadata)
 
+###### 2.3 - summarizeDataset
+def summarizeDataset(imageMetadata, prefixN = 0, datetimeN = 0, wellNumberN = 0):
+    prefixArray = imageMetadata['prefix'].unique()
+    print('Unique prefixes found: ' + str(len(prefixArray)))
+    for prefix in prefixArray:    print(prefix)
+
+    dateTimeArray = imageMetadata['dateTime'].unique()
+    print('Unique date-times found: ' + str(len(dateTimeArray)))
+    for dateTime in dateTimeArray:    print(datetime.fromtimestamp(dateTime.item() / 10**9).strftime('%d_%b_%y'))
+
+    wellNumberArray = imageMetadata['wellNumber'].unique()
+    print('Unique wells found: ' + str(len(wellNumberArray)))
+    for well in wellNumberArray:    print(well)
+
+###### 2.4 - subsetDataset
+def subsetDataset(imageMetadata, prefixN = 0, datetimeN = 0, wellNumberN = 0):
+    prefixArray = imageMetadata['prefix'].unique()
+    print('Unique prefixes found: ' + str(len(prefixArray)))
+    for prefix in prefixArray:    print(prefix)
+    print('Prefix number ' + str(prefixN) + ' ("' + prefixArray[prefixN] + '") selected')
+    imageMetadataCurrent = imageMetadata[imageMetadata['prefix'] == prefixArray[prefixN]]
+
+    dateTimeArray = imageMetadataCurrent['dateTime'].unique()
+    print('Unique date-times found: ' + str(len(dateTimeArray)))
+    for dateTime in dateTimeArray:    print(datetime.fromtimestamp(dateTime.item() / 10**9).strftime('%d_%b_%y'))
+    currentDatetime = dateTimeArray[datetimeN]
+    selectedDatetime = datetime.fromtimestamp(currentDatetime.item() / 10**9).strftime('%d_%b_%y_%H:%M')
+    print('DateTime number ' + str(datetimeN) + ' (' + selectedDatetime + ') selected')
+    imageMetadataCurrent = imageMetadataCurrent[imageMetadataCurrent['dateTime'] == currentDatetime]
+
+    wellNumberArray = imageMetadataCurrent['wellNumber'].unique()
+    print('Unique wells found: ' + str(len(wellNumberArray)))
+    for well in wellNumberArray:    print(well)
+    print('Well number ' + str(wellNumberN) + ' ("' + wellNumberArray[wellNumberN] + '") selected')
+    imageMetadataCurrent = imageMetadataCurrent[imageMetadataCurrent['wellNumber'] == wellNumberArray[wellNumberN]]
+    
+    imageMetadataCurrent = imageMetadataCurrent.sort_values('posNumber')
+
+    return(imageMetadataCurrent)
+
+###### 2.5 - nameDataset
+def nameDataset(imageMetadata, prefixN = 0, datetimeN = 0, wellNumberN = 0):
+    prefixArray = imageMetadata['prefix'].unique()
+    selectedPrefix = prefixArray[prefixN]
+    print('Prefix number ' + str(prefixN) + ' ("' + selectedPrefix + '") selected')
+    imageMetadataCurrent = imageMetadata[imageMetadata['prefix'] == selectedPrefix]
+
+    dateTimeArray = imageMetadataCurrent['dateTime'].unique()
+    currentDatetime = dateTimeArray[datetimeN]
+    selectedDatetime = datetime.fromtimestamp(currentDatetime.item() / 10**9).strftime('%d_%b_%y_%H:%M')
+    print('DateTime number ' + str(datetimeN) + ' (' + selectedDatetime + ') selected')
+    imageMetadataCurrent = imageMetadataCurrent[imageMetadataCurrent['dateTime'] == currentDatetime]
+
+    wellNumberArray = imageMetadataCurrent['wellNumber'].unique()
+    selectedWell = wellNumberArray[wellNumberN]
+    print('Well number ' + str(wellNumberN) + ' ("' + selectedWell + '") selected')
+
+    datasetName = str(selectedPrefix + '--' + selectedDatetime + '--well_' + selectedWell)
+    print('Dataset name: ' + datasetName)
+    return(datasetName)
+
+###### 2.4  - stitchingImgFiles
+def stitchImgFiles(imageMetadataCurrent, reductionFactor = 4):
+    print('Stitching ' + str(len(imageMetadataCurrent)) + ' images into 7x9 grid:')
+    ### Define empty matrix to assign images into
+    imgFirst = mpimg.imread(imageMetadataCurrent['imageFiles'].iloc[0])
+    yw = np.shape(imgFirst)[0]/reductionFactor
+    xw = np.shape(imgFirst)[1]/reductionFactor
+    imgStitched = np.zeros((int(yw*9), int(xw*7))).astype(np.uint8)
+    ### Loop through each and assign
+    for posNum in range(0,len(imageMetadataCurrent)):
+        file = imageMetadataCurrent['imageFiles'].iloc[posNum]
+        print(file)
+        imgNew=mpimg.imread(file)
+        imgNew = rescale(imgNew, 1/reductionFactor, anti_aliasing = False)
+        yn = matrixPlacements['y'][posNum]
+        xn = matrixPlacements['x'][posNum]
+        imgStitched[int(yn*yw):int((yn+1)*yw), int(xn*xw):int((xn+1)*xw)] = imgNew
+    return(imgStitched)
+
+def memSize(variable):
+    print(str(round(getsizeof(variable)/1000000, 1)) + ' MB')
+    
 ##############################################################################
 ### 3. Import Images
 ###### 3.1 - Test load images    #############################################
 
 os.chdir('E:\\Andrew\\Incucyte')
-os.chdir('C:\\Users\\grossar\\Box\\MTEC grant\\Incucyte\\Andrew')
+#os.chdir('C:\\Users\\grossar\\Box\\MTEC grant\\Incucyte\\Andrew')
 
-imageFiles = os.listdir()
-imageFiles2 = []
-for item in imageFiles:
-    if '.jpg' in item:
-        print(item)
-        imageFiles2.append(item)
-    else:
-        pass
-
-imageFiles = imageFiles2
-currentImageFile = imageFiles[4]
-img=mpimg.imread(currentImageFile)
-io.imshow(img)
+imageFiles = getImageFiles()
 
 ###### 3.2 - Generate an empty df   ##########################################
-
-fullDf = pd.DataFrame(columns = ['Experiment', 'DateTime', 'Date', 'Time', 'Well', 'Surface Area-total', 'Colony Num', 'Confluence', 'Dist-min', 'Dist-SD-down', 'Dist-med', 'Dist-SD-up', 'Dist-max'])
+#fullDf = pd.DataFrame(columns = ['Experiment', 'DateTime', 'Date', 'Time', 'Well', 'Surface Area-total', 'Colony Num', 'Confluence', 'Dist-min', 'Dist-SD-down', 'Dist-med', 'Dist-SD-up', 'Dist-max'])
+fullDf = pd.DataFrame(columns = ['DataPoint', 'Surface Area-total', 'Colony Num', 'Confluence', 'Dist-min', 'Dist-SD-down', 'Dist-med', 'Dist-SD-up', 'Dist-max'])
 
 ##############################################################################
 ### 4. Pre-processing
 ###### 4.1 - Parse image files   #############################################
 ########## 4.1.1 - Create metadata table
-prefix     = []
-wellNumber = []
-posNumber  = []
-dateValue  = []
-timeValue  = []
-dateTime   = []
-
-for fileName in imageFiles:
-    splitName = fileName.split('.')[0]
-    splitName = splitName.split('_')
-    prefix     += [splitName[0]]
-    wellNumber += [splitName[1]]
-    posNumber  += [int(splitName[2])]
-    dateValue  += [splitName[3]]
-    timeValue  += [splitName[4]]
-    dateTime   += [datetime.strptime(splitName[3]+splitName[4], '%Yy%mm%dd%Hh%Mm')]
-    
-imageMetadata = pd.DataFrame(list(zip(imageFiles, prefix, wellNumber, posNumber, dateValue, timeValue, dateTime)), columns = ['imageFiles', 'prefix', 'wellNumber', 'posNumber', 'dateValue', 'timeValue', 'dateTime'])
+imageMetadata = createMetadataTable(imageFiles)
 
 ########## 4.1.2 - Subset metadata by project, date, and time
 ### Report prefix groups present:
-prefixArray = imageMetadata['prefix'].unique()
-print('Unique prefixes found: ' + str(len(prefixArray)))
-for prefix in prefixArray:    print(prefix)
-    
-currentPrefix = prefixArray[0]
-imageMetadataCurrent = imageMetadata[imageMetadata['prefix'] == currentPrefix]
 
-### Report datetimes present:
-dateTimeArray = imageMetadataCurrent['dateTime'].unique()
-print('Unique date-times found: ' + str(len(dateTimeArray)))
-for dateTime in dateTimeArray:    print(dateTime)
+summarizeDataset(imageMetadata, prefixN = 0, datetimeN= 0, wellNumberN = 0)
 
-currentDateTime = dateTimeArray[0]
-imageMetadataCurrent = imageMetadataCurrent[imageMetadataCurrent['dateTime'] == currentDateTime]
+imageMetadataCurrent = subsetDataset(imageMetadata, prefixN = 0, datetimeN= 0, wellNumberN = 0)
 
-currentDate = currentDateTime
-currentTime = currentDateTime
+currentImageFile = nameDataset(imageMetadata, prefixN = 0, datetimeN= 0, wellNumberN = 0)
 
-wellNumberArray = imageMetadataCurrent['wellNumber'].unique()
-print('Unique wells found: ' + str(len(wellNumberArray)))
-for well in wellNumberArray:    print(well)
-
-currentWell = wellNumberArray[1]
-imageMetadataCurrent = imageMetadataCurrent[imageMetadataCurrent['wellNumber'] == currentWell]
-
-imageMetadataCurrent = imageMetadataCurrent.sort_values('posNumber')
-
-"""
-
-projectDict = {}                                      # Create a list of unique prefixes
-wellDict = {}
-
-for project in projectNames:                                                    # Loop through prefixes
-
-    rowstoInclude = list(np.where(np.array(prefix) == project)[0])           # For each, identify their rows
-    newDF = imageMetadata.iloc[rowstoInclude]
-    dateNames = list(np.unique(newDF['dateValue']))
-    dateDict = {}
-    
-    for dateValue in dateNames:
-        rowstoInclude2 = list(np.where(np.array(newDF['dateValue']) == dateValue)[0])
-        newDF2 = newDF.iloc[rowstoInclude2,:]
-        timeNames = list(np.unique(newDF2['timeValue']))
-        timeDict = {}
-        
-        for timeValue in timeNames:
-            rowstoInclude2 = list(np.where(np.array(newDF2['timeValue']) == timeValue)[0])
-            newDF3 = newDF2.iloc[rowstoInclude2,:]
-            timeDict[timeValue] = newDF3
-            wellNames = list(np.unique(newDF3['wellNumber']))
-
-            for well in wellNames:
-                rowstoInclude2 = list(np.where(np.array(newDF3['wellNumber']) == well)[0])
-                wellList = list(newDF3.iloc[rowstoInclude2, 0])
-                wellDict[project + '_' + dateValue + '_' + timeValue + '_' + well] = wellList
-        
-        dateDict[dateValue] = timeDict
-        
-    projectDict[project] = dateDict                                               # Add it to the DF list
-### 
-for well in list(wellDict):
-    print('\n' + well + ':\n')
-    for fileName in wellDict[well]:
-        print(fileName)
-    print('\n')
-
-for currentImageFile in fileList:
-    # Identify its well position
-    
-list(projectDict)     ## Returns a list of project names
-list(projectDict.values())  ## Returns a list of dataframes
-list(projectDict.values())[0].loc('dateValue')
-                           
-wellList = np.unique(wellNumber)
-"""
 ###### 4.2 - Stitch well images  #############################################
-### Loac an image
-#os.chdir('E:\\Andrew\\Incucyte')
-currentImageFile = imageMetadataCurrent['imageFiles'].iloc[0]
-imgNew=mpimg.imread(currentImageFile)
-np.shape(imgNew)
-### Rescaele it
-imgNew = (rescale(imgNew, 0.25, anti_aliasing = False)*255).astype(np.uint8)
-np.shape(imgNew)
-yw = imgNew.shape[0]
-xw = imgNew.shape[1]
-
-### Make an empty matrix 9x7 the size of one image
-imgStitched = np.zeros((yw*9, xw*7)).astype(np.uint8)
-
-io.imshow(imgNew)
-
-yn = 0
-xn = 2
-
+imgStitched = stitchImgFiles(imageMetadataCurrent, reductionFactor=4)
 io.imshow(imgStitched)
-imgStitched[yn*yw:(yn+1)*yw, xn*xw:(xn+1)*xw] = imgNew
-io.imshow(imgStitched)
+memSize(imgStitched)
 
+#imgStitched.dtype
+#print(str(round(getsizeof(imgStitched)/1000000, 1)) + ' MB')
 
-imgStitched = np.zeros((yw*9, xw*7)).astype(np.uint8)
-
-io.imshow(imgStitched)
-
-for posNum in range(0,len(imageMetadataCurrent)):
-    file = imageMetadataCurrent['imageFiles'].iloc[posNum]
-    print(file)
-    imgNew=mpimg.imread(file)
-    imgNew = (rescale(imgNew, 0.25, anti_aliasing = False)*255).astype(np.uint8)
-    yw = imgNew.shape[0]
-    xw = imgNew.shape[1]
-    yn = matrixPlacements['y'][posNum]
-    xn = matrixPlacements['x'][posNum]
-    imgStitched[yn*yw:(yn+1)*yw, xn*xw:(xn+1)*xw] = imgNew
-
-io.imshow(imgStitched)
-
-
-    #indexes = np.where(np.array(ints) == item)[0]
-"""
-for well in wellNumberArray:
-    print(well)
-    posToInclude = np.where(np.array(wellNumber) == well)[0].tolist()
-    imagesToInclude = imageMetadata.iloc[posToInclude,:].iloc[:,0].tolist()
-    for fileName in imagesToInclude:
-        print(fileName)
-
-img=mpimg.imread(currentImageFile)
+gc.collect()
 
 ##############################################################################
 ### 5. Processing
 ###### 5.1 - Isolate mask  ###################################################
-os.chdir('E:\\Andrew\\Incucyte')
-imageFiles = os.listdir()
-currentImageFile = imageFiles[4]
-img=mpimg.imread(currentImageFile)
-io.imshow(img)
-np.shape(img)
+
 #img = rgb2hsv(img)[:, :, 1]   # Extract the saturation layer
-"""
+
 img = imgStitched
 img = closing(img > 0.5, square(9))
 
@@ -236,7 +212,7 @@ s_cleared = clear_border(img)
 
 # label image regions
 label_img = label(s_cleared)
-label_img = label(img)
+#label_img = label(img)
 
 # to make the background transparent, pass the value of `bg_label`,
 # and leave `bg_color` as `None` and `kind` as `overlay`
@@ -247,8 +223,7 @@ io.imshow(img_label_overlay)
 
 # Compile the properties of each region
 img_data_l = regionprops(label_image = label_img, intensity_image = img)
-img_data_df = regionprops_table(label_image = label_img, intensity_image = img, 
-                             properties = ('label', 'centroid', 'convex_image', 'area', 'eccentricity', 'equivalent_diameter', 'euler_number'))
+img_data_df = regionprops_table(label_image = label_img, intensity_image = img, properties = ('label', 'centroid', 'convex_image', 'area', 'eccentricity', 'equivalent_diameter', 'euler_number'))
 
 
 saTotal = 10
@@ -260,31 +235,11 @@ colonyN = len(img_data_l)
 print(colonyN)
 img_data = pd.DataFrame(img_data_df)
 
-img_data.head()
-img_data.info
-
-img_data.iloc[:,1]
-img_data.iloc[1]
-img_data.iloc[1,][3]
-
-img_data_l[1].convex_image
-
-'''
-new = np.ones(np.shape(img)[0:2])
-new[mask] = 0
-io.imshow(new)
-'''
-
-
-
 
 ###### 5.2 - Define colony list  #############################################
 
 
 ###### 5.3 - Convert colonies to polygons ####################################
-from skimage.measure import find_contours, approximate_polygon, subdivide_polygon
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
 
 contours = find_contours(img, 0)
 # approximate / simplify coordinates of the two ellipses
@@ -374,13 +329,15 @@ dMax    = round(np.max(min_dist),1)
 
 print('For file ' + str(currentImageFile) + ' : ')
 print('The median distance between colonies is ' + str(dMedian) + ' um')
-print('The minimum distance between colonies is ' + str(dmin) + ' um')
+print('The minimum distance between colonies is ' + str(dMin) + ' um')
 print('The maximum distance between colonies is ' + str(dMax) + ' um')
 print('Two-thirds of colonies are between ' + str(dSD1) + ' um and ' + str(dSD2) + ' um from neighboring colonies.')
 
 ###### 5.8 - Add new stats to a row        ###################################
 
-fullDf = fullDf.append({'Experiment':currentPrefix, 'DateTime': currentDateTime, 'Date':currentDate, 'Time':currentTime, 'Well':currentWell, 'Surface Area-total':saTotal, 'Colony Num':colonyN, 'Confluence':conf, 'Dist-min':dMin, 'Dist-SD-down':dSD1, 'Dist-med':dMedian, 'Dist-SD-up':dSD2, 'Dist-max':dMax}, ignore_index = True)
+fullDf = fullDf.append({'DataPoint':currentImageFile, 'Surface Area-total':saTotal, 'Colony Num':colonyN, 'Confluence':conf, 'Dist-min':dMin, 'Dist-SD-down':dSD1, 'Dist-med':dMedian, 'Dist-SD-up':dSD2, 'Dist-max':dMax}, ignore_index = True)
+
+#fullDf = fullDf.append({'Experiment':currentPrefix, 'DateTime': currentDateTime, 'Date':currentDate, 'Time':currentTime, 'Well':currentWell, 'Surface Area-total':saTotal, 'Colony Num':colonyN, 'Confluence':conf, 'Dist-min':dMin, 'Dist-SD-down':dSD1, 'Dist-med':dMedian, 'Dist-SD-up':dSD2, 'Dist-max':dMax}, ignore_index = True)
 #dfObj = dfObj.append({'User_ID': 23, 'UserName': 'Riti', 'Action': 'Login'}, ignore_index=True)
 
 
