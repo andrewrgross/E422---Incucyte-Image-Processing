@@ -239,16 +239,17 @@ print(metadata[['Vessel-ID','Vessel-name','Last-scan','Experimenter','Cell-type'
 
 
 ###### 3.2 - Select set to analyze and import file list   #################
+metadata['Analysis-ID']
 
-selectedVessel = 106
+selectedAnalysis = 112
 
-targetDir = metadata['Directory'].tolist()[metadata['Vessel-ID'].tolist().index(selectedVessel)]
+targetDir = metadata['Directory'].tolist()[metadata['Analysis-ID'].tolist().index(selectedAnalysis)]
 imageFiles = getImageFiles(targetDir)
 os.chdir(targetDir)
 
 ###### 3.3 - Assign output directory   #################
 variantSuffix = ''
-dataOutputDir = 'E:/Incucyte/Analysis-output/' + str(selectedVessel) + str(variantSuffix) + '/'
+dataOutputDir = 'E:/Incucyte/Analysis-output/A' + str(selectedAnalysis) + str(variantSuffix) + '/'
 createDirIfNeeded(dataOutputDir)
 
 print('Output directory:  ' + dataOutputDir)
