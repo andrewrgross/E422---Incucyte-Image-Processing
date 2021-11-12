@@ -276,6 +276,8 @@ saWell = 3.14159*(35/2)**2
 ##############################################################################
 ### 5. Processing
 ###### 5.1 - Loop through wells  ###################################################
+imageMetadataCurrent = wellList[0]
+rowNum = 40
 
 for imageMetadataCurrent in wellList:
     os.chdir(targetDir)
@@ -290,7 +292,8 @@ for imageMetadataCurrent in wellList:
         print('Current file: ' + currentImgFile + '  ;  Dimentions: ' + str(img.shape) + '; Original size (MB): ' + memSize(img))
         img = closing(img > 0.5, square(3))     # Perform erosion to split colonies
         img = clear_border(img)           # remove artifacts connected to image border
-        label_img = label(img)            # label image regions
+        label_img = label(img, background=0)            # label image regions
+        #label_img = label(img)            # label image regions
         img_label_overlay = label2rgb(label_img, image=img, bg_label=0)  # to make the background transparent, pass the value of `bg_label' and leave `bg_color` as `None` and `kind` as `overlay`
         plt.imshow(img_label_overlay)
         #img_data_l = regionprops(label_image = label_img, intensity_image = img)
